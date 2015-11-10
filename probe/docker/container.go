@@ -324,7 +324,7 @@ func (c *container) GetNode(hostID string, localAddrs []net.IP) report.Node {
 	if c.container.State.Paused {
 		result = result.WithControls(UnpauseContainer)
 	} else if c.container.State.Running {
-		result = result.WithControls(RestartContainer, StopContainer, PauseContainer)
+		result = result.WithControls(RestartContainer, StopContainer, PauseContainer, AttachContainer)
 	} else {
 		result = result.WithControls(StartContainer)
 	}

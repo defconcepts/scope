@@ -8,13 +8,10 @@ import (
 )
 
 // ClientFactory is a thing thats makes AppClients
-type ClientFactory func(ProbeConfig, string, string) (AppClient, error)
+type ClientFactory func(string, string) (AppClient, error)
 
 type multiClient struct {
-	ProbeConfig
-
 	clientFactory ClientFactory
-	handler       ControlHandler
 
 	mtx     sync.Mutex
 	sema    semaphore
@@ -32,21 +29,29 @@ type clientTuple struct {
 // AppClient for each one.
 type MultiAppClient interface {
 	Set(hostname string, endpoints []string)
+	PipeHandlerFor(appID string) PipeHandler
 	Stop()
 }
 
 // NewMultiAppClient creates a new MultiAppClient.
-func NewMultiAppClient(pc ProbeConfig, handler ControlHandler, clientFactory ClientFactory) MultiAppClient {
+func NewMultiAppClient(clientFactory ClientFactory) MultiAppClient {
 	return &multiClient{
-		ProbeConfig:   pc,
 		clientFactory: clientFactory,
-		handler:       handler,
 
 		sema:    newSemaphore(maxConcurrentGET),
 		clients: map[string]AppClient{},
 		ids:     map[string]report.IDList{},
 		quit:    make(chan struct{}),
 	}
+}
+
+func (c *multiClient) PipeHandlerFor(appID string) PipeHandler {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+	if c, ok := c.clients[appID]; ok {
+		return c
+	}
+	return nil
 }
 
 // Set the list of endpoints for the given hostname.
@@ -59,7 +64,7 @@ func (c *multiClient) Set(hostname string, endpoints []string) {
 			c.sema.acquire()
 			defer c.sema.release()
 
-			client, err := c.clientFactory(c.ProbeConfig, hostname, endpoint)
+			client, err := c.clientFactory(hostname, endpoint)
 			if err != nil {
 				log.Printf("Error creating new app client: %v", err)
 				return
@@ -88,7 +93,7 @@ func (c *multiClient) Set(hostname string, endpoints []string) {
 		_, ok := c.clients[tuple.ID]
 		if !ok {
 			c.clients[tuple.ID] = tuple.AppClient
-			tuple.AppClient.ControlConnection(c.handler)
+			tuple.AppClient.ControlConnection()
 		}
 	}
 	c.ids[hostname] = hostIDs

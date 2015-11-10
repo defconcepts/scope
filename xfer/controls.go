@@ -2,6 +2,7 @@ package xfer
 
 import (
 	"fmt"
+	"io"
 	"net/rpc"
 	"sync"
 
@@ -11,6 +12,7 @@ import (
 // Request is the UI -> App -> Probe message type for control RPCs
 type Request struct {
 	ID      int64
+	AppID   string
 	NodeID  string
 	Control string
 }
@@ -20,6 +22,35 @@ type Response struct {
 	ID    int64
 	Value interface{}
 	Error string
+	Pipe  int64
+}
+
+// PipeIO is athe Probe <-> App message type for pipes.
+type PipeIO struct {
+	ID  int64
+	Buf []byte
+}
+
+// Message is the unions of Request, Response and PipeIO
+type Message struct {
+	Request  *rpc.Request
+	Response *rpc.Response
+	Value    interface{}
+	Pipe     *PipeIO
+}
+
+// PipeHandler is something that handles PipeIO messages
+type PipeHandler interface {
+	HandlePipeIO(*PipeIO) error
+}
+
+// PipeHandlerFunc is an adapter (ala golang's http RequestHandlerFunc) for
+// PipeHandler.
+type PipeHandlerFunc func(*PipeIO) error
+
+// HandlePipeIO implements PipeHandler
+func (f PipeHandlerFunc) HandlePipeIO(pio *PipeIO) error {
+	return f(pio)
 }
 
 // ControlHandler is interface used in the app and the probe to represent
@@ -61,13 +92,15 @@ type JSONWebsocketCodec struct {
 	sync.Mutex
 	conn *websocket.Conn
 	err  chan struct{}
+	pipe PipeHandler
 }
 
 // NewJSONWebsocketCodec makes a new JSONWebsocketCodec
-func NewJSONWebsocketCodec(conn *websocket.Conn) *JSONWebsocketCodec {
+func NewJSONWebsocketCodec(conn *websocket.Conn, pipe PipeHandler) *JSONWebsocketCodec {
 	return &JSONWebsocketCodec{
 		conn: conn,
 		err:  make(chan struct{}),
+		pipe: pipe,
 	}
 }
 
@@ -82,27 +115,59 @@ func (j *JSONWebsocketCodec) WriteRequest(r *rpc.Request, v interface{}) error {
 	j.Lock()
 	defer j.Unlock()
 
-	if err := j.conn.WriteJSON(r); err != nil {
+	if err := j.conn.WriteJSON(Message{Request: r}); err != nil {
 		return err
 	}
-	return j.conn.WriteJSON(v)
+	return j.conn.WriteJSON(Message{Value: v})
+}
+
+// WriteResponse implements rpc.ServerCodec
+func (j *JSONWebsocketCodec) WriteResponse(r *rpc.Response, v interface{}) error {
+	j.Lock()
+	defer j.Unlock()
+
+	if err := j.conn.WriteJSON(Message{Response: r}); err != nil {
+		return err
+	}
+	return j.conn.WriteJSON(Message{Value: v})
+}
+
+// HandlePipeIO writes a pipe io to the websocket
+func (j *JSONWebsocketCodec) HandlePipeIO(p *PipeIO) error {
+	j.Lock()
+	defer j.Unlock()
+	return j.conn.WriteJSON(Message{Pipe: p})
+}
+
+func (j *JSONWebsocketCodec) readMessage(v interface{}) (*Message, error) {
+	for {
+		m := Message{Value: v}
+		if err := j.conn.ReadJSON(&m); err != nil {
+			close(j.err)
+			return nil, err
+		}
+
+		if m.Pipe != nil {
+			j.pipe.HandlePipeIO(m.Pipe)
+			continue
+		}
+
+		return &m, nil
+	}
 }
 
 // ReadResponseHeader implements rpc.ClientCodec
 func (j *JSONWebsocketCodec) ReadResponseHeader(r *rpc.Response) error {
-	err := j.conn.ReadJSON(r)
-	if err != nil {
-		close(j.err)
+	m, err := j.readMessage(nil)
+	if err == nil {
+		*r = *m.Response
 	}
 	return err
 }
 
 // ReadResponseBody implements rpc.ClientCodec
 func (j *JSONWebsocketCodec) ReadResponseBody(v interface{}) error {
-	err := j.conn.ReadJSON(v)
-	if err != nil {
-		close(j.err)
-	}
+	_, err := j.readMessage(v)
 	return err
 }
 
@@ -113,29 +178,70 @@ func (j *JSONWebsocketCodec) Close() error {
 
 // ReadRequestHeader implements rpc.ServerCodec
 func (j *JSONWebsocketCodec) ReadRequestHeader(r *rpc.Request) error {
-	err := j.conn.ReadJSON(r)
-	if err != nil {
-		close(j.err)
+	m, err := j.readMessage(nil)
+	if err == nil {
+		*r = *m.Request
 	}
 	return err
 }
 
 // ReadRequestBody implements rpc.ServerCodec
 func (j *JSONWebsocketCodec) ReadRequestBody(v interface{}) error {
-	err := j.conn.ReadJSON(v)
-	if err != nil {
-		close(j.err)
-	}
+	_, err := j.readMessage(v)
 	return err
 }
 
-// WriteResponse implements rpc.ServerCodec
-func (j *JSONWebsocketCodec) WriteResponse(r *rpc.Response, v interface{}) error {
-	j.Lock()
-	defer j.Unlock()
+// Pipe is a bi-directional channel from someone thing in the probe
+// to the UI.
+type Pipe interface {
+	ID() int64
 
-	if err := j.conn.WriteJSON(r); err != nil {
-		return err
+	PipeHandler
+	io.Reader
+	io.Writer
+	io.Closer
+}
+
+type pipe struct {
+	id int64
+
+	pw             *io.PipeWriter // for the HandlePipeIO implementation
+	*io.PipeReader                // for the Read() implementation
+	handler        PipeHandler    // used by Write()
+}
+
+func NewPipe(id int64, write PipeHandler) Pipe {
+	r, w := io.Pipe()
+	return &pipe{
+		id:         id,
+		handler:    write,
+		PipeReader: r,
+		pw:         w,
 	}
-	return j.conn.WriteJSON(v)
+}
+
+func (p *pipe) ID() int64 {
+	return p.id
+}
+
+func (p *pipe) HandlePipeIO(pio *PipeIO) error {
+	// this is an incoming pio from the app, so is a write to this pipe
+	// that needs buffering until a corresponding call to Read()
+	_, err := p.pw.Write(pio.Buf)
+	return err
+}
+
+func (p *pipe) Close() error {
+	return nil // TODO close pipe, etc
+}
+
+func (p *pipe) Write(b []byte) (n int, err error) {
+	if err := p.handler.HandlePipeIO(&PipeIO{
+		ID:  p.id,
+		Buf: b,
+	}); err != nil {
+		return 0, err
+	}
+
+	return len(b), nil
 }

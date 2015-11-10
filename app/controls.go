@@ -1,28 +1,40 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
 	"net/rpc"
+	"strconv"
 	"sync"
 
 	"github.com/gorilla/mux"
+	"github.com/gorilla/websocket"
 
 	"github.com/weaveworks/scope/xfer"
 )
 
-func registerControlRoutes(router *mux.Router) {
-	controlRouter := &controlRouter{
-		probes: map[string]controlHandler{},
-	}
-	router.Methods("GET").Path("/api/control/ws").HandlerFunc(controlRouter.handleProbeWS)
-	router.Methods("POST").MatcherFunc(URLMatcher("/api/control/{probeID}/{nodeID}/{control}")).HandlerFunc(controlRouter.handleControl)
-}
-
 type controlHandler struct {
 	id     int64
 	client *rpc.Client
+	codec  *xfer.JSONWebsocketCodec
+}
+
+type controlRouter struct {
+	sync.Mutex
+	probes map[string]controlHandler
+	pipes  map[int64]xfer.Pipe
+}
+
+func registerControlRoutes(router *mux.Router) {
+	controlRouter := &controlRouter{
+		probes: map[string]controlHandler{},
+		pipes:  map[int64]xfer.Pipe{},
+	}
+	router.Methods("GET").Path("/api/control/ws").HandlerFunc(controlRouter.handleProbeWS)
+	router.Methods("GET").Path("/api/pipe/{pipeID}").HandlerFunc(controlRouter.handlePipeWS)
+	router.Methods("POST").MatcherFunc(URLMatcher("/api/control/{probeID}/{nodeID}/{control}")).HandlerFunc(controlRouter.handleControl)
 }
 
 func (ch *controlHandler) handle(req xfer.Request) xfer.Response {
@@ -33,9 +45,8 @@ func (ch *controlHandler) handle(req xfer.Request) xfer.Response {
 	return res
 }
 
-type controlRouter struct {
-	sync.Mutex
-	probes map[string]controlHandler
+func (ch *controlHandler) HandlePipeIO(pio *xfer.PipeIO) error {
+	return ch.codec.HandlePipeIO(pio)
 }
 
 func (cr *controlRouter) get(probeID string) (controlHandler, bool) {
@@ -79,6 +90,7 @@ func (cr *controlRouter) handleControl(w http.ResponseWriter, r *http.Request) {
 
 	result := handler.handle(xfer.Request{
 		ID:      rand.Int63(),
+		AppID:   uniqueID,
 		NodeID:  nodeID,
 		Control: control,
 	})
@@ -86,7 +98,10 @@ func (cr *controlRouter) handleControl(w http.ResponseWriter, r *http.Request) {
 		respondWith(w, http.StatusBadRequest, result.Error)
 		return
 	}
-	respondWith(w, http.StatusOK, result.Value)
+	if result.Pipe != 0 {
+		cr.getOrCreatePipe(result.Pipe, probeID)
+	}
+	respondWith(w, http.StatusOK, result)
 }
 
 // handleProbeWS accepts websocket connections from the probe and registers
@@ -105,10 +120,15 @@ func (cr *controlRouter) handleProbeWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	codec := xfer.NewJSONWebsocketCodec(conn)
+	pipeHandler := xfer.PipeHandlerFunc(func(pio *xfer.PipeIO) error {
+		pipe := cr.getOrCreatePipe(pio.ID, probeID)
+		return pipe.HandlePipeIO(pio)
+	})
+	codec := xfer.NewJSONWebsocketCodec(conn, pipeHandler)
 	client := rpc.NewClientWithCodec(codec)
 	handler := controlHandler{
 		id:     rand.Int63(),
+		codec:  codec,
 		client: client,
 	}
 
@@ -118,4 +138,98 @@ func (cr *controlRouter) handleProbeWS(w http.ResponseWriter, r *http.Request) {
 
 	cr.rm(probeID, handler)
 	client.Close()
+}
+
+func (cr *controlRouter) getOrCreatePipe(id int64, probeID string) xfer.Pipe {
+	cr.Lock()
+	defer cr.Unlock()
+	pipe, ok := cr.pipes[id]
+	if !ok {
+		handler := xfer.PipeHandlerFunc(func(pio *xfer.PipeIO) error {
+			ch, ok := cr.get(probeID)
+			if !ok {
+				return fmt.Errorf("probe not found: %s", probeID)
+			}
+			return ch.HandlePipeIO(pio)
+		})
+		pipe = xfer.NewPipe(id, handler)
+		cr.pipes[id] = pipe
+	}
+	return pipe
+}
+
+func (cr *controlRouter) getPipe(id int64) (xfer.Pipe, bool) {
+	cr.Lock()
+	defer cr.Unlock()
+	pipe, ok := cr.pipes[id]
+	return pipe, ok
+}
+
+func (cr *controlRouter) handlePipeWS(w http.ResponseWriter, r *http.Request) {
+	var (
+		vars        = mux.Vars(r)
+		pipeID, err = strconv.ParseInt(vars["pipeID"], 10, 64)
+	)
+	if err != nil {
+		respondWith(w, http.StatusBadRequest, err)
+		return
+	}
+
+	pipe, ok := cr.getPipe(pipeID)
+	if !ok {
+		log.Printf("Pipe %s is not connected right now...", pipeID)
+		http.NotFound(w, r)
+		return
+	}
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("Error upgrading to websocket: %v", err)
+		return
+	}
+	defer conn.Close()
+	readQuit := make(chan struct{})
+	writeQuit := make(chan struct{})
+
+	// Read-from-UI loop
+	go func() {
+		close(readQuit)
+		for {
+			_, buf, err := conn.ReadMessage() // TODO type should be binary message
+			if err != nil {
+				log.Printf("Error reading websocket for pipe %d: %v", pipeID, err)
+				return
+			}
+
+			if _, err := pipe.Write(buf); err != nil {
+				log.Printf("Error writing pipe %d: %v", pipeID, err)
+				return
+			}
+		}
+	}()
+
+	// Write-to-UI loop
+	go func() {
+		close(writeQuit)
+		buf := make([]byte, 1024)
+		for {
+			n, err := pipe.Read(buf)
+			if err != nil {
+				log.Printf("Error reading pipe %d: %v", pipeID, err)
+				return
+			}
+
+			if err := conn.WriteMessage(websocket.BinaryMessage, buf[n:]); err != nil {
+				log.Printf("Error writing websocket for pipe %d: %v", pipeID, err)
+				return
+			}
+		}
+	}()
+
+	// block until one of the goroutines exits
+	// this convoluted mechanism is to ensure we only close the websocket once.
+	select {
+	case <-readQuit:
+	case <-writeQuit:
+	}
 }

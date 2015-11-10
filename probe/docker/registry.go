@@ -56,11 +56,13 @@ type Client interface {
 	ListImages(docker_client.ListImagesOptions) ([]docker_client.APIImages, error)
 	AddEventListener(chan<- *docker_client.APIEvents) error
 	RemoveEventListener(chan *docker_client.APIEvents) error
+
 	StopContainer(string, uint) error
 	StartContainer(string, *docker_client.HostConfig) error
 	RestartContainer(string, uint) error
 	PauseContainer(string) error
 	UnpauseContainer(string) error
+	AttachToContainer(docker_client.AttachToContainerOptions) error
 }
 
 func newDockerClient(endpoint string) (Client, error) {

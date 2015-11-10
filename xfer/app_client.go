@@ -2,6 +2,7 @@ package xfer
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"net/rpc"
@@ -13,19 +14,21 @@ import (
 	"github.com/weaveworks/scope/common/sanitize"
 )
 
+// AppClient is a client for the scope app.
+type AppClient interface {
+	Details() (Details, error)
+	ControlConnection()
+	HandlePipeIO(*PipeIO) error
+	Stop()
+}
+
 // Details are some generic details that can be fetched from /api
 type Details struct {
 	ID      string `json:"id"`
 	Version string `json:"version"`
 }
 
-// AppClient is a client to an app for dealing with controls.
-type AppClient interface {
-	Details() (Details, error)
-	ControlConnection(handler ControlHandler)
-	Stop()
-}
-
+// appClient is a client to an app for dealing with controls.
 type appClient struct {
 	ProbeConfig
 
@@ -35,11 +38,14 @@ type appClient struct {
 	client   http.Client
 
 	controlServerCodecMtx sync.Mutex
-	controlServerCodec    rpc.ServerCodec
+	controlServerCodec    *JSONWebsocketCodec
+
+	control ControlHandler
+	pipe    PipeHandler
 }
 
-// NewAppClient makes a new AppClient.
-func NewAppClient(pc ProbeConfig, hostname, target string) (AppClient, error) {
+// NewAppClient makes a new appClient.
+func NewAppClient(pc ProbeConfig, hostname, target string, control ControlHandler, pipe PipeHandler) (AppClient, error) {
 	httpTransport, err := pc.getHTTPTransport(hostname)
 	if err != nil {
 		return nil, err
@@ -52,6 +58,8 @@ func NewAppClient(pc ProbeConfig, hostname, target string) (AppClient, error) {
 		client: http.Client{
 			Transport: httpTransport,
 		},
+		control: control,
+		pipe:    pipe,
 	}, nil
 }
 
@@ -81,7 +89,18 @@ func (c *appClient) Details() (Details, error) {
 	return result, json.NewDecoder(resp.Body).Decode(&result)
 }
 
-func (c *appClient) controlConnection(handler ControlHandler) error {
+func (c *appClient) HandlePipeIO(pio *PipeIO) error {
+	c.controlServerCodecMtx.Lock()
+	defer c.controlServerCodecMtx.Unlock()
+
+	if c.controlServerCodec == nil {
+		return fmt.Errorf("Not connected")
+	}
+
+	return c.controlServerCodec.HandlePipeIO(pio)
+}
+
+func (c *appClient) controlConnection() error {
 	dialer := websocket.Dialer{}
 	headers := http.Header{}
 	c.ProbeConfig.authorizeHeaders(headers)
@@ -96,9 +115,9 @@ func (c *appClient) controlConnection(handler ControlHandler) error {
 		conn.Close()
 	}()
 
-	codec := NewJSONWebsocketCodec(conn)
+	codec := NewJSONWebsocketCodec(conn, c.pipe)
 	server := rpc.NewServer()
-	if err := server.RegisterName("control", handler); err != nil {
+	if err := server.RegisterName("control", c.control); err != nil {
 		return err
 	}
 
@@ -122,12 +141,12 @@ func (c *appClient) controlConnection(handler ControlHandler) error {
 	return nil
 }
 
-func (c *appClient) controlConnectionLoop(handler ControlHandler) {
+func (c *appClient) controlConnectionLoop() {
 	defer log.Printf("Control connection to %s exiting", c.target)
 	backoff := initialBackoff
 
 	for {
-		err := c.controlConnection(handler)
+		err := c.controlConnection()
 		if err == nil {
 			backoff = initialBackoff
 			continue
@@ -146,6 +165,6 @@ func (c *appClient) controlConnectionLoop(handler ControlHandler) {
 	}
 }
 
-func (c *appClient) ControlConnection(handler ControlHandler) {
-	go c.controlConnectionLoop(handler)
+func (c *appClient) ControlConnection() {
+	go c.controlConnectionLoop()
 }

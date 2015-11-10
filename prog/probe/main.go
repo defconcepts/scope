@@ -112,12 +112,20 @@ func main() {
 	publishers := xfer.NewMultiPublisher(factory)
 	defer publishers.Stop()
 
-	clients := xfer.NewMultiAppClient(xfer.ProbeConfig{
+	probeConfig := xfer.ProbeConfig{
 		Token:    *token,
 		ProbeID:  probeID,
 		Insecure: *insecure,
-	}, xfer.ControlHandlerFunc(controls.HandleControlRequest), xfer.NewAppClient)
+	}
+	clients := xfer.NewMultiAppClient(func(hostname, endpoint string) (xfer.AppClient, error) {
+		return xfer.NewAppClient(
+			probeConfig, hostname, endpoint,
+			xfer.ControlHandlerFunc(controls.HandleControlRequest),
+			controls.Pipes,
+		)
+	})
 	defer clients.Stop()
+	controls.Mux = clients
 
 	resolver := xfer.NewStaticResolver(targets, publishers.Set, clients.Set)
 	defer resolver.Stop()
