@@ -17,7 +17,7 @@ func main() {
 
 	oldState, err := terminal.MakeRaw(0)
 	if err != nil {
-	        panic(err)
+		panic(err)
 	}
 	defer terminal.Restore(0, oldState)
 
