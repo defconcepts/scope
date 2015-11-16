@@ -147,8 +147,9 @@ func (j *JSONWebsocketCodec) readMessage(v interface{}) (*Message, error) {
 		}
 
 		if m.Pipe != nil {
-			log.Printf("pipe io for %s: '%s'", m.Pipe.ID, string(m.Pipe.Buf))
-			j.pipe.HandlePipeIO(m.Pipe)
+			if err := j.pipe.HandlePipeIO(m.Pipe); err != nil {
+				log.Printf("Error handling pio for %s: %v", m.Pipe.ID, err)
+			}
 			continue
 		}
 
@@ -227,6 +228,7 @@ func (p *pipe) ID() string {
 func (p *pipe) HandlePipeIO(pio *PipeIO) error {
 	// this is an incoming pio from the app, so is a write to this pipe
 	// that needs buffering until a corresponding call to Read()
+	// From the contract: Write must return a non-nil error if it returns n < len(p).
 	_, err := p.pw.Write(pio.Buf)
 	return err
 }

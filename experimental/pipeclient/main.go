@@ -51,8 +51,6 @@ func main() {
 				return
 			}
 
-			log.Printf("Read %d bytes from stdin", n)
-
 			if err := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); err != nil {
 				log.Printf("Error writing websocket: %v", err)
 				return
