@@ -131,6 +131,13 @@ module.exports = {
     });
   },
 
+  receiveControlPipe: function(pipeId) {
+    AppDispatcher.dispatch({
+      type: ActionTypes.RECEIVE_CONTROL_PIPE,
+      pipeId: pipeId
+    });
+  },
+
   receiveControlSuccess: function() {
     AppDispatcher.dispatch({
       type: ActionTypes.DO_CONTROL_SUCCESS

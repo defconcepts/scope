@@ -59,6 +59,7 @@ let selectedNodeId = null;
 let topologies = [];
 let topologiesLoaded = false;
 let routeSet = false;
+let controlPipe = null;
 let websocketClosed = true;
 
 function processTopologies(topologyList) {
@@ -135,6 +136,10 @@ const AppStore = Object.assign({}, EventEmitter.prototype, {
 
   getControlError: function() {
     return controlError;
+  },
+
+  getControlPipe: function() {
+    return controlPipe;
   },
 
   getCurrentTopology: function() {
@@ -336,6 +341,11 @@ AppStore.registeredCallback = function(payload) {
   case ActionTypes.DO_CONTROL_SUCCESS:
     controlPending = false;
     controlError = null;
+    AppStore.emit(AppStore.CHANGE_EVENT);
+    break;
+
+  case ActionTypes.RECEIVE_CONTROL_PIPE:
+    controlPipe = payload.pipeId;
     AppStore.emit(AppStore.CHANGE_EVENT);
     break;
 

@@ -10,6 +10,7 @@ const WebapiUtils = require('../utils/web-api-utils');
 const AppActions = require('../actions/app-actions');
 const Details = require('./details');
 const Nodes = require('./nodes');
+const Terminal = require('./terminal');
 const RouterUtils = require('../utils/router-utils');
 
 const ESC_KEY_CODE = 27;
@@ -19,6 +20,7 @@ function getStateFromStores() {
     activeTopologyOptions: AppStore.getActiveTopologyOptions(),
     controlError: AppStore.getControlError(),
     controlPending: AppStore.isControlPending(),
+    controlPipe: AppStore.getControlPipe(),
     currentTopology: AppStore.getCurrentTopology(),
     currentTopologyId: AppStore.getCurrentTopologyId(),
     currentTopologyOptions: AppStore.getCurrentTopologyOptions(),
@@ -78,6 +80,8 @@ const App = React.createClass({
           controlPending={this.state.controlPending}
           nodeId={this.state.selectedNodeId}
           details={this.state.nodeDetails} /> }
+
+        {this.state.controlPipe && <Terminal controlPipe={this.state.controlPipe} />}
 
         <div className="header">
           <Logo />

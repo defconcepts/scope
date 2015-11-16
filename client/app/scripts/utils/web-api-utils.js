@@ -143,8 +143,11 @@ function doControl(probeId, nodeId, control) {
   reqwest({
     method: 'POST',
     url: url,
-    success: function() {
+    success: function(res) {
       AppActions.receiveControlSuccess();
+      if (res && res.pipe) {
+        AppActions.receiveControlPipe(res.pipe);
+      }
     },
     error: function(err) {
       AppActions.receiveControlError(err.response);
