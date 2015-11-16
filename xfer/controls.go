@@ -11,7 +11,6 @@ import (
 
 // Request is the UI -> App -> Probe message type for control RPCs
 type Request struct {
-	ID      int64
 	AppID   string
 	NodeID  string
 	Control string
@@ -19,15 +18,14 @@ type Request struct {
 
 // Response is the Probe -> App -> UI message type for the control RPCs.
 type Response struct {
-	ID    int64
-	Value interface{}
-	Error string
-	Pipe  int64
+	Value interface{} `json:"value,omitempty"`
+	Error string      `json:"error,omitempty"`
+	Pipe  string      `json:"pipe,omitempty"`
 }
 
 // PipeIO is athe Probe <-> App message type for pipes.
 type PipeIO struct {
-	ID  int64
+	ID  string
 	Buf []byte
 }
 
@@ -194,7 +192,7 @@ func (j *JSONWebsocketCodec) ReadRequestBody(v interface{}) error {
 // Pipe is a bi-directional channel from someone thing in the probe
 // to the UI.
 type Pipe interface {
-	ID() int64
+	ID() string
 
 	PipeHandler
 	io.Reader
@@ -203,14 +201,14 @@ type Pipe interface {
 }
 
 type pipe struct {
-	id int64
+	id string
 
 	pw             *io.PipeWriter // for the HandlePipeIO implementation
 	*io.PipeReader                // for the Read() implementation
 	handler        PipeHandler    // used by Write()
 }
 
-func NewPipe(id int64, write PipeHandler) Pipe {
+func NewPipe(id string, write PipeHandler) Pipe {
 	r, w := io.Pipe()
 	return &pipe{
 		id:         id,
@@ -220,7 +218,7 @@ func NewPipe(id int64, write PipeHandler) Pipe {
 	}
 }
 
-func (p *pipe) ID() int64 {
+func (p *pipe) ID() string {
 	return p.id
 }
 

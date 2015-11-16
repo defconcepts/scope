@@ -15,13 +15,13 @@ const (
 var (
 	Mux   AppMultiplexer
 	Pipes = &PipeRegistry{
-		pipes: map[int64]xfer.Pipe{},
+		pipes: map[string]xfer.Pipe{},
 	}
 )
 
 type PipeRegistry struct {
 	sync.Mutex
-	pipes map[int64]xfer.Pipe
+	pipes map[string]xfer.Pipe
 }
 
 type AppMultiplexer interface {
@@ -51,7 +51,8 @@ func (r *PipeRegistry) NewPipe(appID string) (xfer.Pipe, error) {
 		return nil, fmt.Errorf("No client connection for %s", appID)
 	}
 
-	pipe := xfer.NewPipe(rand.Int63(), handler)
-	r.pipes[pipe.ID()] = pipe
+	id := fmt.Sprintf("pipe-%d", rand.Int63())
+	pipe := xfer.NewPipe(id, handler)
+	r.pipes[id] = pipe
 	return pipe, nil
 }

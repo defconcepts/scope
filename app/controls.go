@@ -6,7 +6,6 @@ import (
 	"math/rand"
 	"net/http"
 	"net/rpc"
-	"strconv"
 	"sync"
 
 	"github.com/gorilla/mux"
@@ -24,13 +23,13 @@ type controlHandler struct {
 type controlRouter struct {
 	sync.Mutex
 	probes map[string]controlHandler
-	pipes  map[int64]xfer.Pipe
+	pipes  map[string]xfer.Pipe
 }
 
 func registerControlRoutes(router *mux.Router) {
 	controlRouter := &controlRouter{
 		probes: map[string]controlHandler{},
-		pipes:  map[int64]xfer.Pipe{},
+		pipes:  map[string]xfer.Pipe{},
 	}
 	router.Methods("GET").Path("/api/control/ws").HandlerFunc(controlRouter.handleProbeWS)
 	router.Methods("GET").Path("/api/pipe/{pipeID}").HandlerFunc(controlRouter.handlePipeWS)
@@ -89,7 +88,6 @@ func (cr *controlRouter) handleControl(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := handler.handle(xfer.Request{
-		ID:      rand.Int63(),
 		AppID:   uniqueID,
 		NodeID:  nodeID,
 		Control: control,
@@ -98,7 +96,7 @@ func (cr *controlRouter) handleControl(w http.ResponseWriter, r *http.Request) {
 		respondWith(w, http.StatusBadRequest, result.Error)
 		return
 	}
-	if result.Pipe != 0 {
+	if result.Pipe != "" {
 		cr.getOrCreatePipe(result.Pipe, probeID)
 	}
 	respondWith(w, http.StatusOK, result)
@@ -140,7 +138,7 @@ func (cr *controlRouter) handleProbeWS(w http.ResponseWriter, r *http.Request) {
 	client.Close()
 }
 
-func (cr *controlRouter) getOrCreatePipe(id int64, probeID string) xfer.Pipe {
+func (cr *controlRouter) getOrCreatePipe(id string, probeID string) xfer.Pipe {
 	cr.Lock()
 	defer cr.Unlock()
 	pipe, ok := cr.pipes[id]
@@ -158,7 +156,7 @@ func (cr *controlRouter) getOrCreatePipe(id int64, probeID string) xfer.Pipe {
 	return pipe
 }
 
-func (cr *controlRouter) getPipe(id int64) (xfer.Pipe, bool) {
+func (cr *controlRouter) getPipe(id string) (xfer.Pipe, bool) {
 	cr.Lock()
 	defer cr.Unlock()
 	pipe, ok := cr.pipes[id]
@@ -167,14 +165,9 @@ func (cr *controlRouter) getPipe(id int64) (xfer.Pipe, bool) {
 
 func (cr *controlRouter) handlePipeWS(w http.ResponseWriter, r *http.Request) {
 	var (
-		vars        = mux.Vars(r)
-		pipeID, err = strconv.ParseInt(vars["pipeID"], 10, 64)
+		vars   = mux.Vars(r)
+		pipeID = vars["pipeID"]
 	)
-	if err != nil {
-		respondWith(w, http.StatusBadRequest, err)
-		return
-	}
-
 	pipe, ok := cr.getPipe(pipeID)
 	if !ok {
 		log.Printf("Pipe %s is not connected right now...", pipeID)
