@@ -143,6 +143,7 @@ func (cr *controlRouter) getOrCreatePipe(id string, probeID string) xfer.Pipe {
 	defer cr.Unlock()
 	pipe, ok := cr.pipes[id]
 	if !ok {
+		log.Printf("Creating pipe id %s", id)
 		handler := xfer.PipeHandlerFunc(func(pio *xfer.PipeIO) error {
 			ch, ok := cr.get(probeID)
 			if !ok {
@@ -186,16 +187,16 @@ func (cr *controlRouter) handlePipeWS(w http.ResponseWriter, r *http.Request) {
 
 	// Read-from-UI loop
 	go func() {
-		close(readQuit)
+		defer close(readQuit)
 		for {
 			_, buf, err := conn.ReadMessage() // TODO type should be binary message
 			if err != nil {
-				log.Printf("Error reading websocket for pipe %d: %v", pipeID, err)
+				log.Printf("Error reading websocket for pipe %s: %v", pipeID, err)
 				return
 			}
 
 			if _, err := pipe.Write(buf); err != nil {
-				log.Printf("Error writing pipe %d: %v", pipeID, err)
+				log.Printf("Error writing pipe %s: %v", pipeID, err)
 				return
 			}
 		}
@@ -203,17 +204,17 @@ func (cr *controlRouter) handlePipeWS(w http.ResponseWriter, r *http.Request) {
 
 	// Write-to-UI loop
 	go func() {
-		close(writeQuit)
+		defer close(writeQuit)
 		buf := make([]byte, 1024)
 		for {
 			n, err := pipe.Read(buf)
 			if err != nil {
-				log.Printf("Error reading pipe %d: %v", pipeID, err)
+				log.Printf("Error reading pipe %s: %v", pipeID, err)
 				return
 			}
 
-			if err := conn.WriteMessage(websocket.BinaryMessage, buf[n:]); err != nil {
-				log.Printf("Error writing websocket for pipe %d: %v", pipeID, err)
+			if err := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); err != nil {
+				log.Printf("Error writing websocket for pipe %s: %v", pipeID, err)
 				return
 			}
 		}

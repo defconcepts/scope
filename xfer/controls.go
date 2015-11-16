@@ -3,6 +3,7 @@ package xfer
 import (
 	"fmt"
 	"io"
+	"log"
 	"net/rpc"
 	"sync"
 
@@ -146,6 +147,7 @@ func (j *JSONWebsocketCodec) readMessage(v interface{}) (*Message, error) {
 		}
 
 		if m.Pipe != nil {
+			log.Printf("pipe io for %s: '%s'", m.Pipe.ID, string(m.Pipe.Buf))
 			j.pipe.HandlePipeIO(m.Pipe)
 			continue
 		}
