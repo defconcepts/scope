@@ -58,12 +58,12 @@ func TestControl(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var response string
+	var response xfer.Response
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		t.Fatal(err)
 	}
 
-	if response != "foo" {
-		t.Fatalf("'%s' != 'foo'", response)
+	if response.Value != "foo" {
+		t.Fatalf("'%s' != 'foo'", response.Value)
 	}
 }

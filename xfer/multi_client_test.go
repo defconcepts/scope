@@ -21,6 +21,10 @@ func (c *mockClient) ControlConnection() {
 	c.count++
 }
 
+func (c *mockClient) HandlePipeIO(*xfer.PipeIO) error {
+	return nil
+}
+
 func (c *mockClient) Stop() {
 	c.stopped++
 }

@@ -85,6 +85,11 @@ func TestReporter(t *testing.T) {
 				Human: "Unpause",
 				Icon:  "fa-play",
 			},
+			docker.AttachContainer: report.Control{
+				ID:    docker.AttachContainer,
+				Human: "Attach",
+				Icon:  "fa-terminal",
+			},
 		},
 	}
 	want.ContainerImage = report.Topology{

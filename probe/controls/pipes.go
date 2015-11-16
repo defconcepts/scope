@@ -13,17 +13,22 @@ const (
 )
 
 var (
-	Mux   AppMultiplexer
+	// Mux is the thing we use to send messages from probe -> app.
+	Mux AppMultiplexer
+
+	// Pipes is the singleton collection of Pipes in this probe.
 	Pipes = &PipeRegistry{
 		pipes: map[string]xfer.Pipe{},
 	}
 )
 
+// PipeRegistry holds a collection of pipes.
 type PipeRegistry struct {
 	sync.Mutex
 	pipes map[string]xfer.Pipe
 }
 
+// AppMultiplexer gets an PipeHandler for a given probe/
 type AppMultiplexer interface {
 	PipeHandlerFor(string) xfer.PipeHandler
 }

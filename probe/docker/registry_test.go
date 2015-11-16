@@ -120,6 +120,10 @@ func (m *mockDockerClient) UnpauseContainer(_ string) error {
 	return fmt.Errorf("unpaused")
 }
 
+func (m *mockDockerClient) AttachToContainer(_ client.AttachToContainerOptions) error {
+	return fmt.Errorf("AttachToContainer")
+}
+
 func (m *mockDockerClient) send(event *client.APIEvents) {
 	m.RLock()
 	defer m.RUnlock()

@@ -211,6 +211,7 @@ type pipe struct {
 	handler        PipeHandler    // used by Write()
 }
 
+// NewPipe makes a new... pipe.
 func NewPipe(id string, write PipeHandler) Pipe {
 	r, w := io.Pipe()
 	return &pipe{
