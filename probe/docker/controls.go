@@ -52,16 +52,13 @@ func (r *registry) attachContainer(containerID string, req xfer.Request) xfer.Re
 	if err != nil {
 		xfer.ResponseError(err)
 	}
-	err = r.client.AttachToContainer(docker_client.AttachToContainerOptions{
+	go r.client.AttachToContainer(docker_client.AttachToContainerOptions{
 		Container:    containerID,
 		RawTerminal:  true,
 		InputStream:  pipe,
 		OutputStream: pipe,
 		ErrorStream:  pipe,
 	})
-	if err != nil {
-		xfer.ResponseError(err)
-	}
 	return xfer.Response{
 		Pipe: pipe.ID(),
 	}
