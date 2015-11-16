@@ -227,6 +227,8 @@ func (p *pipe) ID() string {
 }
 
 func (p *pipe) HandlePipeIO(pio *PipeIO) error {
+	log.Printf("HandlePipeIO pid=%s, buf=%s", pio.ID, string(pio.Buf))
+
 	// this is an incoming pio from the app, so is a write to this pipe
 	// that needs buffering until a corresponding call to Read()
 	// From the contract: Write must return a non-nil error if it returns n < len(p).

@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/gorilla/websocket"
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 func main() {
@@ -13,6 +14,12 @@ func main() {
 	}
 	url := os.Args[1]
 	log.Printf("Connecting to %s", url)
+
+	oldState, err := terminal.MakeRaw(0)
+	if err != nil {
+	        panic(err)
+	}
+	defer terminal.Restore(0, oldState)
 
 	dialer := websocket.Dialer{}
 	conn, _, err := dialer.Dial(url, nil)
